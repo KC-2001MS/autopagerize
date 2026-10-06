@@ -17,6 +17,14 @@
 // @grant          GM_log
 // @grant          GM_xmlhttpRequest
 // @grant          GM_registerMenuCommand
+// @grant          GM.getValue
+// @grant          GM.setValue
+// @grant          GM.xmlHttpRequest
+// @grant          GM.registerMenuCommand
+// @connect        wedata.net
+// @connect        *
+// @run-at         document-end
+// @inject-into    content
 // ==/UserScript==
 //
 // auther:  swdyh http://d.hatena.ne.jp/swdyh/
@@ -31,12 +39,8 @@
 // http://www.gnu.org/copyleft/gpl.html
 //
 
-if (isGreasemonkey()) {
-    var ep = getPref('exclude_patterns')
-    if (ep && isExclude(ep)) {
-        // FIXME
-        // return
-    }
+if (isUserScript()) {
+    userScriptCompatible()
 }
 else {
     gmCompatible()
@@ -51,7 +55,7 @@ var BASE_REMAIN_HEIGHT = 400
 var FORCE_TARGET_WINDOW = getPref('force_target_window', true)
 var XHR_TIMEOUT = 30 * 1000
 var SITEINFO_IMPORT_URLS = [
-    'http://wedata.net/databases/AutoPagerize/items.json',
+    'https://wedata.net/databases/AutoPagerize/items.json',
 ]
 var COLOR = {
     on: '#0f0',
@@ -343,7 +347,12 @@ AutoPager.prototype.request = function() {
     }
     else {
         this.showLoading(true)
-        GM_xmlhttpRequest(opt)
+        if (isUserScript()) {
+            sameOriginRequest(opt)
+        }
+        else {
+            GM_xmlhttpRequest(opt)
+        }
     }
 }
 
@@ -444,10 +453,21 @@ AutoPager.prototype.addPage = function(htmlDoc, page) {
     return page.map(function(i) {
         var pe = document.importNode(i, true)
         self.insertPoint.parentNode.insertBefore(pe, self.insertPoint)
-        var ev = document.createEvent('MutationEvent')
-        ev.initMutationEvent('AutoPagerize_DOMNodeInserted', true, false,
-                             self.insertPoint.parentNode, null,
-                             self.requestURL, null, null)
+        var ev
+        try {
+            ev = document.createEvent('MutationEvent')
+            ev.initMutationEvent('AutoPagerize_DOMNodeInserted', true, false,
+                                 self.insertPoint.parentNode, null,
+                                 self.requestURL, null, null)
+        }
+        catch(e) {
+            // MutationEvent is removed from recent browsers.
+            ev = new CustomEvent('AutoPagerize_DOMNodeInserted', {
+                bubbles: true, cancelable: false,
+                detail: { relatedNode: self.insertPoint.parentNode,
+                          newValue: self.requestURL }
+            })
+        }
         pe.dispatchEvent(ev)
         return pe
     })
@@ -645,7 +665,7 @@ var getCacheErrorCallback = function(url) {
             info: []
         }
     }
-    GM_setValue('cacheInfo', cacheInfo.toSource())
+    GM_setValue('cacheInfo', JSON.stringify(cacheInfo))
 }
 
 var linkFilter = function(doc, url) {
@@ -702,7 +722,18 @@ if (typeof(window.AutoPagerize) == 'undefined') {
 
 var settings = {}
 var ap = null
-if (isChromeExtension()) {
+var cacheInfo = {}
+if (isUserScript()) {
+    loadUserScriptValues(['cacheInfo', 'exclude_patterns', 'force_target_window'], function() {
+        FORCE_TARGET_WINDOW = getPref('force_target_window', true)
+        var ep = getPref('exclude_patterns')
+        if (ep && isExclude(ep)) {
+            return
+        }
+        launchUserScript()
+    })
+}
+else if (isChromeExtension()) {
     var port = chrome.extension.connect({name: "settingsChannel"})
     port.postMessage()
     port.onMessage.addListener(function(res) {
@@ -774,9 +805,13 @@ else if (isJetpack()) {
     }
 }
 else {
+    launchUserScript()
+}
+
+function launchUserScript() {
     launchAutoPager(SITEINFO)
     GM_registerMenuCommand('AutoPagerize - clear cache', clearCache)
-    var cacheInfo = getCache()
+    cacheInfo = getCache()
     var xhrStates = {}
     SITEINFO_IMPORT_URLS.forEach(function(i) {
         if (!cacheInfo[i] || new Date(cacheInfo[i].expire) < new Date()) {
@@ -865,7 +900,9 @@ function getFirstElementByXPath(xpath, node) {
 function getXPathResult(xpath, node, resultType) {
     var node = node || document
     var doc = node.ownerDocument || node
-    var resolver = doc.createNSResolver(node.documentElement || node)
+    var resolverNode = node.documentElement || node
+    var resolver = (typeof doc.createNSResolver == 'function') ?
+        doc.createNSResolver(resolverNode) : resolverNode
     // Use |node.lookupNamespaceURI('')| for Opera 9.5
     // A workaround for bugs of Node.lookupNamespaceURI(null)
     // https://bugzilla.mozilla.org/show_bug.cgi?id=693615
@@ -1014,6 +1051,21 @@ function fixResolvePath() {
     if (resolvePath('', 'http://resolve.test/') == 'http://resolve.test/') {
         return
     }
+    // XML Base is not supported by recent browsers, use URL API instead.
+    // (global URL is shadowed by the URL variable of this script.)
+    var URLClass = window.URL
+    if (typeof URLClass == 'function') {
+        try {
+            if (new URLClass('a', 'http://resolve.test/b/c').href ==
+                'http://resolve.test/b/a') {
+                resolvePath = function resolvePath_url(path, base) {
+                    return new URLClass(path, base).href
+                }
+                return
+            }
+        }
+        catch(e) {}
+    }
     // A workaround for WebKit and Mozilla 1.9.2a1pre,
     // which don't support XML Base in HTML.
     // https://bugs.webkit.org/show_bug.cgi?id=17423
@@ -1074,12 +1126,12 @@ function isFirefoxExtension() {
 }
 
 function isChromeExtension() {
-    return (typeof chrome == 'object') &&
+    return !isUserScript() && (typeof chrome == 'object') &&
         (typeof chrome.extension == 'object')
 }
 
 function isSafariExtension() {
-    return (typeof safari == 'object') &&
+    return !isUserScript() && (typeof safari == 'object') &&
         (typeof safari.extension == 'object')
 }
 
@@ -1087,9 +1139,16 @@ function isGreasemonkey() {
     return (typeof GM_log == 'function')
 }
 
+// Greasemonkey, Tampermonkey, Violentmonkey and Safari userscript managers
+// (Userscripts, Stay, Tampermonkey for Safari).
+function isUserScript() {
+    return (typeof GM_info == 'object') || (typeof GM == 'object') ||
+        isGreasemonkey()
+}
+
 function isJetpack() {
     // isFirefoxExtension is obsolete
-    return (!isGreasemonkey() && !isSafariExtension() &&
+    return (!isUserScript() && !isSafariExtension() &&
             !isChromeExtension() && !isFirefoxExtension())
 }
 
@@ -1119,4 +1178,116 @@ function gmCompatible() {
         }
     }
     return true
+}
+
+// Fill the gaps of userscript managers which provide only the async GM.* API
+// (GM4 style) or a part of GM_* API, like Safari userscript managers.
+// userScriptValues is initialized here because this function is called
+// before the declaration below is evaluated.
+var userScriptValues
+function userScriptCompatible() {
+    var hasGM = (typeof GM == 'object') && GM
+    userScriptValues = {}
+
+    if (typeof GM_getValue != 'function' ||
+        (hasGM && typeof GM.getValue == 'function')) {
+        GM_getValue = function(key, defaultValue) {
+            return (key in userScriptValues) ?
+                userScriptValues[key] : defaultValue
+        }
+        var nativeSetValue = (typeof GM_setValue == 'function') ? GM_setValue : null
+        GM_setValue = function(key, value) {
+            userScriptValues[key] = value
+            if (hasGM && typeof GM.setValue == 'function') {
+                GM.setValue(key, value)
+            }
+            else if (nativeSetValue) {
+                nativeSetValue(key, value)
+            }
+        }
+    }
+    if (typeof GM_addStyle != 'function') {
+        GM_addStyle = function(css) {
+            var style = document.createElement('style')
+            style.textContent = css
+            ;(document.head || document.documentElement).appendChild(style)
+            return style
+        }
+    }
+    if (typeof GM_log != 'function') {
+        GM_log = function(message) {
+            console.log(message)
+        }
+    }
+    if (typeof GM_registerMenuCommand != 'function') {
+        GM_registerMenuCommand = (hasGM && typeof GM.registerMenuCommand == 'function') ?
+            function(name, fn) { GM.registerMenuCommand(name, fn) } :
+            function() {}
+    }
+    if (typeof DOMParser == 'function') {
+        // scripts in a document made by DOMParser are never executed.
+        createHTMLDocumentByString = function(str) {
+            var type = (document.documentElement.nodeName != 'HTML') ?
+                'application/xhtml+xml' : 'text/html'
+            return new DOMParser().parseFromString(str, type)
+        }
+    }
+    if (typeof GM_xmlhttpRequest != 'function') {
+        GM_xmlhttpRequest = (hasGM && typeof GM.xmlHttpRequest == 'function') ?
+            function(opt) { GM.xmlHttpRequest(opt) } :
+            sameOriginRequest
+    }
+}
+
+function loadUserScriptValues(keys, callback) {
+    var hasGM = (typeof GM == 'object') && GM
+    if (!(hasGM && typeof GM.getValue == 'function')) {
+        // synchronous GM_getValue is available.
+        callback()
+        return
+    }
+    Promise.all(keys.map(function(key) {
+        return Promise.resolve(GM.getValue(key)).then(function(value) {
+            if (typeof value != 'undefined') {
+                userScriptValues[key] = value
+            }
+        }, function() {})
+    })).then(callback, callback)
+}
+
+// requests to the same origin are made by XMLHttpRequest of the page,
+// so that cookies and the character set are handled by the browser.
+function sameOriginRequest(opt) {
+    var xhr = new XMLHttpRequest()
+    xhr.open(opt.method || 'GET', opt.url, true)
+    var forbidden = /^(cookie|cookie2|host|referer|user-agent)$/i
+    for (var name in (opt.headers || {})) {
+        if (!forbidden.test(name)) {
+            xhr.setRequestHeader(name, opt.headers[name])
+        }
+    }
+    if (opt.overrideMimeType && xhr.overrideMimeType) {
+        xhr.overrideMimeType(opt.overrideMimeType)
+    }
+    xhr.timeout = XHR_TIMEOUT
+    var response = function() {
+        return {
+            status: xhr.status,
+            statusText: xhr.statusText,
+            responseText: xhr.responseText,
+            responseHeaders: xhr.getAllResponseHeaders(),
+            finalUrl: xhr.responseURL || opt.url
+        }
+    }
+    xhr.onload = function() {
+        if (opt.onload) {
+            opt.onload(response())
+        }
+    }
+    xhr.onerror = xhr.ontimeout = function() {
+        if (opt.onerror) {
+            opt.onerror(response())
+        }
+    }
+    xhr.send(opt.data || null)
 }
