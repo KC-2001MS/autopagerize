@@ -2,24 +2,24 @@
 // @name           AutoPagerize
 // @namespace      http://swdyh.yu.to/
 // @description    loading next page and inserting into current page.
-// @include        http://*
-// @include        https://*
+// @match          http://*/*
+// @match          https://*/*
 // @exclude        https://mail.google.com/*
 // @exclude        http://b.hatena.ne.jp/*
 // @exclude        http://www.facebook.com/plugins/like.php*
 // @exclude        http://api.tweetmeme.com/button.js*
 // @version        0.0.66
-// @updateURL      https://userscripts.org/scripts/source/8551.user.js
 // @icon           http://autopagerize.net/img/icons/icon_032.png
 // @grant          GM_getValue
 // @grant          GM_setValue
 // @grant          GM_addStyle
-// @grant          GM_log
 // @grant          GM_xmlhttpRequest
 // @grant          GM_registerMenuCommand
 // @grant          GM.getValue
 // @grant          GM.setValue
+// @grant          GM.addStyle
 // @grant          GM.xmlHttpRequest
+// @grant          GM.xmlhttpRequest
 // @grant          GM.registerMenuCommand
 // @connect        wedata.net
 // @connect        *
@@ -39,20 +39,18 @@
 // http://www.gnu.org/copyleft/gpl.html
 //
 
-if (isUserScript()) {
-    userScriptCompatible()
-}
-else {
-    gmCompatible()
-}
+(function() {
+'use strict'
 
-var URL = 'http://autopagerize.net/'
+var gm = createGMAdapter()
+
+var HOME_URL = 'http://autopagerize.net/'
 var VERSION = '0.0.66'
 var DEBUG = false
 var AUTO_START = true
 var CACHE_EXPIRE = 24 * 60 * 60 * 1000
 var BASE_REMAIN_HEIGHT = 400
-var FORCE_TARGET_WINDOW = getPref('force_target_window', true)
+var FORCE_TARGET_WINDOW = true
 var XHR_TIMEOUT = 30 * 1000
 var SITEINFO_IMPORT_URLS = [
     'https://wedata.net/databases/AutoPagerize/items.json',
@@ -104,8 +102,9 @@ var AutoPager = function(info) {
         this.insertPoint = getFirstElementByXPath(info.insertBefore)
     }
 
+    var lastPageElement
     if (!this.insertPoint) {
-        var lastPageElement = getElementsByXPath(info.pageElement).pop()
+        lastPageElement = getElementsByXPath(info.pageElement).pop()
         if (lastPageElement) {
             this.insertPoint = lastPageElement.nextSibling ||
                 lastPageElement.parentNode.appendChild(document.createTextNode(' '))
@@ -122,54 +121,17 @@ var AutoPager = function(info) {
     this.loadedURLs[location.href] = true
     var toggle = function() {self.stateToggle()}
     this.toggle = toggle
-    GM_registerMenuCommand('AutoPagerize - on/off', toggle)
+    gm.registerMenuCommand('AutoPagerize - on/off', toggle)
     this.scroll= function() { self.onScroll() }
     window.addEventListener("scroll", this.scroll, false)
 
-    if (isFirefoxExtension()) {
-        var div = document.createElement("div")
-        div.setAttribute('id', 'autopagerize_icon')
-        div.style.display = 'none'
-        document.body.appendChild(div)
-        this.icon = div
-    }
-    else if (isChromeExtension() || isSafariExtension() || isJetpack()) {
-        var frame = document.createElement('iframe')
-        frame.style.display = 'none'
-        frame.style.position = 'fixed'
-        frame.style.bottom = '0px'
-        frame.style.left = '0px'
-        frame.style.height = '25px'
-        frame.style.border = '0px'
-        frame.style.opacity = '0.8'
-        frame.style.zIndex = '1000'
-        frame.width = '100%'
-        frame.scrolling = 'no'
-        this.messageFrame = frame
-        var u = settings['extension_path'] ?
-            settings['extension_path'] + 'loading.html' :
-            'http://autopagerize.net/files/loading.html'
-        this.messageFrame.src = u
-        document.body.appendChild(frame)
-        if (isSafariExtension()) {
-            safari.self.tab.dispatchMessage('launched', {url: location.href })
-        }
-        else if (isChromeExtension()) {
-            chrome.extension.connect({name: "launched"}).postMessage()
-        }
-        if (isJetpack()) {
-            postMessage({name: 'launched', data: location.href })
-        }
-   }
-    else {
-        this.initIcon()
-        this.initHelp()
-        GM_addStyle('@media print{#autopagerize_icon, #autopagerize_help {display: none !important;}}')
-        GM_addStyle('hr.autopagerize_page_separator {clear: both;}')
-        this.icon.addEventListener("mouseover", function() {
-            self.viewHelp()
-        }, true)
-    }
+    this.initIcon()
+    this.initHelp()
+    gm.addStyle('@media print{#autopagerize_icon, #autopagerize_help {display: none !important;}}')
+    gm.addStyle('hr.autopagerize_page_separator {clear: both;}')
+    this.icon.addEventListener("mouseover", function() {
+        self.viewHelp()
+    }, true)
 
     var scrollHeight = getScrollHeight()
     var bottom = getElementPosition(this.insertPoint).top ||
@@ -193,7 +155,9 @@ AutoPager.prototype.getPageElementsBottom = function() {
         var elem = getElementsByXPath(this.info.pageElement).pop()
         return getElementBottom(elem)
     }
-    catch(e) {}
+    catch(e) {
+        return null
+    }
 }
 
 AutoPager.prototype.initHelp = function() {
@@ -209,10 +173,11 @@ AutoPager.prototype.initHelp = function() {
     toggleDiv.setAttribute('style', 'margin:0 0 0 50px;')
     var a = document.createElement('a')
     a.setAttribute('class', 'autopagerize_link')
-    a.innerHTML = 'on/off'
+    a.textContent = 'on/off'
     a.href = 'javascript:void(0)'
     var self = this
-    var toggle = function() {
+    var toggle = function(e) {
+        e.preventDefault()
         self.stateToggle()
         helpDiv.style.top = '-200px'
     }
@@ -233,7 +198,7 @@ AutoPager.prototype.initHelp = function() {
 
     var versionDiv = document.createElement('div')
     versionDiv.setAttribute('style', 'clear:both;')
-    versionDiv.innerHTML = '<a href="' + URL +
+    versionDiv.innerHTML = '<a href="' + HOME_URL +
         '">AutoPagerize</a> ver ' + VERSION
     helpDiv.appendChild(versionDiv)
     document.body.appendChild(helpDiv)
@@ -249,7 +214,7 @@ AutoPager.prototype.initHelp = function() {
     }
     helpDiv.addEventListener('mouseout', proc, false)
     this.helpLayer = helpDiv
-    GM_addStyle('#autopagerize_help a { color: #0f0; text-decoration: underline;}')
+    gm.addStyle('#autopagerize_help a { color: #0f0; text-decoration: underline;}')
 }
 
 AutoPager.prototype.viewHelp = function() {
@@ -291,18 +256,8 @@ AutoPager.prototype.updateIcon = function(state) {
         st = rename[st]
     }
     var color = COLOR[st]
-    if (color) {
-        if (isFirefoxExtension()) {
-            chlorine.pageAction.update(color, location.href)
-        }
-        else if (isChromeExtension()) {
-            chrome.extension.connect({name: "pageActionChannel"}).postMessage(color)
-        }
-        else if (isSafariExtension() || isJetpack()) {
-        }
-        else {
-            this.icon.style.background = color
-        }
+    if (color && this.icon) {
+        this.icon.style.background = color
     }
 }
 
@@ -313,19 +268,15 @@ AutoPager.prototype.request = function() {
     this.lastRequestURL = this.requestURL
     var self = this
     var mime = 'text/html; charset=' + document.characterSet
-    var headers = {}
 
-    if (isSameDomain(this.requestURL)) {
-        headers.Cookie = document.cookie
-    }
-    else {
+    if (!isSameDomain(this.requestURL)) {
         this.error()
         return
     }
     var opt = {
         method: 'get',
         url: this.requestURL,
-        headers: headers,
+        headers: {},
         overrideMimeType: mime,
         onerror: function(res) {
             self.error()
@@ -347,28 +298,14 @@ AutoPager.prototype.request = function() {
     }
     else {
         this.showLoading(true)
-        if (isUserScript()) {
-            sameOriginRequest(opt)
-        }
-        else {
-            GM_xmlhttpRequest(opt)
-        }
+        // the next page is in the same origin, so the page's XMLHttpRequest
+        // is used. cookies and the character set are handled by the browser.
+        sameOriginRequest(opt)
     }
 }
 
 AutoPager.prototype.showLoading = function(sw) {
-    if (sw) {
-        this.updateIcon('loading')
-        if (this.messageFrame && settings['display_message_bar']) {
-            this.messageFrame.style.display = 'block'
-        }
-    }
-    else {
-        this.updateIcon('enable')
-        if (this.messageFrame) {
-            this.messageFrame.style.display = 'none'
-        }
-    }
+    this.updateIcon(sw ? 'loading' : 'enable')
 }
 
 AutoPager.prototype.requestLoad = function(res) {
@@ -379,9 +316,10 @@ AutoPager.prototype.requestLoad = function(res) {
     AutoPager.documentFilters.forEach(function(i) {
         i(htmlDoc, this.requestURL, this.info)
     }, this)
+    var page, url
     try {
-        var page = getElementsByXPath(this.info.pageElement, htmlDoc)
-        var url = this.getNextURL(this.info.nextLink, htmlDoc, this.requestURL)
+        page = getElementsByXPath(this.info.pageElement, htmlDoc)
+        url = this.getNextURL(this.info.nextLink, htmlDoc, this.requestURL)
     }
     catch(e){
         log(e)
@@ -413,9 +351,8 @@ AutoPager.prototype.requestLoad = function(res) {
         debug('nextLink not found.', this.info.nextLink, htmlDoc)
         this.terminate()
     }
-    var ev = document.createEvent('Event')
-    ev.initEvent('GM_AutoPagerizeNextPageLoaded', true, false)
-    document.dispatchEvent(ev)
+    document.dispatchEvent(new Event('GM_AutoPagerizeNextPageLoaded',
+                                     { bubbles: true, cancelable: false }))
 }
 
 AutoPager.prototype.addPage = function(htmlDoc, page) {
@@ -448,26 +385,22 @@ AutoPager.prototype.addPage = function(htmlDoc, page) {
         this.insertPoint.parentNode.insertBefore(p, this.insertPoint)
     }
 
-    p.innerHTML = 'page: <a class="autopagerize_link" href="' +
-        this.requestURL.replace(/&/g, '&amp;') + '">' + (++this.pageNum) + '</a>'
+    p.textContent = 'page: '
+    var pageLink = document.createElement('a')
+    pageLink.setAttribute('class', 'autopagerize_link')
+    pageLink.href = this.requestURL
+    pageLink.textContent = ++this.pageNum
+    p.appendChild(pageLink)
+
     return page.map(function(i) {
         var pe = document.importNode(i, true)
         self.insertPoint.parentNode.insertBefore(pe, self.insertPoint)
-        var ev
-        try {
-            ev = document.createEvent('MutationEvent')
-            ev.initMutationEvent('AutoPagerize_DOMNodeInserted', true, false,
-                                 self.insertPoint.parentNode, null,
-                                 self.requestURL, null, null)
-        }
-        catch(e) {
-            // MutationEvent is removed from recent browsers.
-            ev = new CustomEvent('AutoPagerize_DOMNodeInserted', {
-                bubbles: true, cancelable: false,
-                detail: { relatedNode: self.insertPoint.parentNode,
-                          newValue: self.requestURL }
-            })
-        }
+        // MutationEvent is removed from recent browsers.
+        var ev = new CustomEvent('AutoPagerize_DOMNodeInserted', {
+            bubbles: true, cancelable: false,
+            detail: { relatedNode: self.insertPoint.parentNode,
+                      newValue: self.requestURL }
+        })
         pe.dispatchEvent(ev)
         return pe
     })
@@ -476,20 +409,16 @@ AutoPager.prototype.addPage = function(htmlDoc, page) {
 AutoPager.prototype.initIcon = function() {
     var div = document.createElement("div")
     div.setAttribute('id', 'autopagerize_icon')
-    with (div.style) {
-        fontSize   = '12px'
-        position   = 'fixed'
-        top        = '3px'
-        right      = '3px'
-        background = COLOR['on']
-        color      = '#fff'
-        width = '10px'
-        height = '10px'
-        zIndex = '255'
-        if (this.state != 'enable') {
-            background = COLOR['off']
-        }
-    }
+    var style = div.style
+    style.fontSize   = '12px'
+    style.position   = 'fixed'
+    style.top        = '3px'
+    style.right      = '3px'
+    style.background = (this.state == 'enable') ? COLOR['on'] : COLOR['off']
+    style.color      = '#fff'
+    style.width      = '10px'
+    style.height     = '10px'
+    style.zIndex     = '255'
     document.body.appendChild(div)
     this.icon = div
 }
@@ -504,7 +433,8 @@ AutoPager.prototype.getNextURL = function(xpath, doc, url) {
         }
         else {
             var base = getFirstElementByXPath('//base[@href]', doc)
-            return resolvePath(nextValue, (base ? base.href : url))
+            var baseUrl = base ? resolvePath(base.getAttribute('href'), url) : url
+            return resolvePath(nextValue, baseUrl)
         }
     }
 }
@@ -514,12 +444,8 @@ AutoPager.prototype.terminate = function() {
     this.updateIcon('terminated')
     var self = this
     setTimeout(function() {
-        if (self.icon) {
+        if (self.icon && self.icon.parentNode) {
             self.icon.parentNode.removeChild(self.icon)
-        }
-        if (isSafariExtension()) {
-            var mf = self.messageFrame
-            mf.parentNode.removeChild(mf)
         }
     }, 1500)
 }
@@ -527,17 +453,6 @@ AutoPager.prototype.terminate = function() {
 AutoPager.prototype.error = function() {
     this.updateIcon('error')
     window.removeEventListener('scroll', this.scroll, false)
-    if (isSafariExtension() || isChromeExtension() || isJetpack()) {
-        var mf = this.messageFrame
-        var u = settings['extension_path'] ?
-            settings['extension_path'] + 'error.html' :
-            'http://autopagerize.net/files/error.html'
-        mf.src = u
-        mf.style.display = 'block'
-        setTimeout(function() {
-            mf.parentNode.removeChild(mf)
-        }, 3000)
-    }
 }
 
 AutoPager.documentFilters = []
@@ -545,29 +460,6 @@ AutoPager.requestFilters = []
 AutoPager.responseFilters = []
 AutoPager.filters = []
 
-var parseInfo = function(str) {
-    var lines = str.split(/\r\n|\r|\n/)
-    var re = /(^[^:]*?):(.*)$/
-    var strip = function(str) {
-        return str.replace(/^\s*/, '').replace(/\s*$/, '')
-    }
-    var info = {}
-    for (var i = 0; i < lines.length; i++) {
-        if (lines[i].match(re)) {
-            info[RegExp.$1] = strip(RegExp.$2)
-        }
-    }
-    var isValid = function(info) {
-        var infoProp = ['url', 'nextLink', 'pageElement']
-        for (var i = 0; i < infoProp.length; i++) {
-            if (!info[infoProp[i]]) {
-                return false
-            }
-        }
-        return true
-    }
-    return isValid(info) ? info : null
-}
 var launchAutoPager = function(list) {
     if (list.length == 0) {
         return
@@ -578,6 +470,7 @@ var launchAutoPager = function(list) {
                 return
             }
             else if (!location.href.match(list[i].url)) {
+                continue
             }
             else if (!getFirstElementByXPath(list[i].nextLink)) {
                 // FIXME microformats case detection.
@@ -603,11 +496,11 @@ var launchAutoPager = function(list) {
     }
 }
 var clearCache = function() {
-    GM_setValue('cacheInfo', '')
+    gm.setValue('cacheInfo', '')
 }
 var getCache = function() {
     try {
-        return JSON.parse(GM_getValue('cacheInfo')) || {}
+        return JSON.parse(gm.getValue('cacheInfo')) || {}
     }
     catch(e) {
         return {}
@@ -645,7 +538,7 @@ var getCacheCallback = function(res, url) {
             expire: new Date(new Date().getTime() + CACHE_EXPIRE),
             info: info
         }
-        GM_setValue('cacheInfo', JSON.stringify(cacheInfo))
+        gm.setValue('cacheInfo', JSON.stringify(cacheInfo))
         launchAutoPager(info)
     }
     else {
@@ -665,12 +558,12 @@ var getCacheErrorCallback = function(url) {
             info: []
         }
     }
-    GM_setValue('cacheInfo', JSON.stringify(cacheInfo))
+    gm.setValue('cacheInfo', JSON.stringify(cacheInfo))
 }
 
 var linkFilter = function(doc, url) {
     var base = getFirstElementByXPath('//base[@href]', doc)
-    var baseUrl = base ? base.href : url
+    var baseUrl = base ? resolvePath(base.getAttribute('href'), url) : url
     var isSameBase = isSameBaseUrl(location.href, baseUrl)
     if (!FORCE_TARGET_WINDOW && isSameBase) {
         return
@@ -684,20 +577,18 @@ var linkFilter = function(doc, url) {
             i.target = '_blank'
         }
         if (!isSameBase && !attrHref.match(/^#|^\w+:/)) {
-            i.href = resolvePath(i.getAttribute('href'), baseUrl)
+            i.setAttribute('href', resolvePath(attrHref, baseUrl))
         }
     })
 
     if (!isSameBase) {
-        var images = getElementsByXPath('descendant-or-self::img', doc)
+        var images = getElementsByXPath('descendant-or-self::img[@src]', doc)
         images.forEach(function(i) {
-            i.src = resolvePath(i.getAttribute('src'), baseUrl)
+            i.setAttribute('src', resolvePath(i.getAttribute('src'), baseUrl))
         })
     }
 }
 AutoPager.documentFilters.push(linkFilter)
-
-fixResolvePath()
 
 if (typeof(window.AutoPagerize) == 'undefined') {
     window.AutoPagerize = {}
@@ -715,108 +606,31 @@ if (typeof(window.AutoPagerize) == 'undefined') {
     }
     window.AutoPagerize.launchAutoPager = launchAutoPager
 
-    var ev = document.createEvent('Event')
-    ev.initEvent('GM_AutoPagerizeLoaded', true, false)
-    document.dispatchEvent(ev)
+    document.dispatchEvent(new Event('GM_AutoPagerizeLoaded',
+                                     { bubbles: true, cancelable: false }))
 }
 
-var settings = {}
 var ap = null
 var cacheInfo = {}
-if (isUserScript()) {
-    loadUserScriptValues(['cacheInfo', 'exclude_patterns', 'force_target_window'], function() {
-        FORCE_TARGET_WINDOW = getPref('force_target_window', true)
-        var ep = getPref('exclude_patterns')
-        if (ep && isExclude(ep)) {
-            return
-        }
-        launchUserScript()
-    })
-}
-else if (isChromeExtension()) {
-    var port = chrome.extension.connect({name: "settingsChannel"})
-    port.postMessage()
-    port.onMessage.addListener(function(res) {
-        settings = res
-        if (res['exclude_patterns'] && isExclude(res['exclude_patterns'])) {
-            return
-        }
-        launchAutoPager(SITEINFO)
-        var port_ = chrome.extension.connect({name: "siteinfoChannel"})
-        port_.postMessage({ url: location.href })
-        port_.onMessage.addListener(function(res) {
-            launchAutoPager(res)
-            chrome.extension.onConnect.addListener(function(port) {
-                if (port.name == "toggleRequestChannel") {
-                    port.onMessage.addListener(function(msg) {
-                        if (ap) {
-                            ap.toggle()
-                        }
-                    })
-                }
-            })
-        })
-    })
-}
-else if (isSafariExtension()) {
-    var re_exclude = /^(about:|safari-extension:)/
-    if (!location.href.match(re_exclude)) {
-        safari.self.addEventListener('message', function(event) {
-            if (event.name === 'settings') {
-                settings = event.message
-                safari.self.tab.dispatchMessage('siteinfoChannel', {url: location.href })
-            }
-            else if (event.name === 'siteinfoChannel') {
-                if (!settings['exclude_patterns'] || !isExclude(settings['exclude_patterns'])) {
-                    launchAutoPager(SITEINFO)
-                    launchAutoPager([MICROFORMAT])
-                    launchAutoPager(event.message)
-                }
-            }
-            else if (event.name === 'toggleRequestChannel') {
-                if (ap) {
-                    ap.toggle()
-                }
-            }
-            else if (event.name === 'updateSettings') {
-                settings = event.message
-            }
-        }, false)
-        safari.self.tab.dispatchMessage('settings')
-    }
-}
-else if (isJetpack()) {
-    postMessage({ name: 'settings' })
-    onMessage = function(message) {
-        if (message.name == 'siteinfo') {
-            // launchAutoPager(SITEINFO)
-            launchAutoPager(message.data)
-        }
-        else if (message.name == 'settings') {
-            settings = message.data
-            if (settings['exclude_patterns'] && isExclude(settings['exclude_patterns'])) {
-                // return
-            }
-            else  {
-                postMessage({ name: 'siteinfo', url: location.href })
-                launchAutoPager([MICROFORMAT])
-            }
-        }
-    }
-}
-else {
-    launchUserScript()
-}
 
-function launchUserScript() {
+gm.load(['cacheInfo', 'exclude_patterns', 'force_target_window'], function() {
+    FORCE_TARGET_WINDOW = gm.getValue('force_target_window', true)
+    var ep = gm.getValue('exclude_patterns')
+    if (ep && isExclude(ep)) {
+        return
+    }
+    launch()
+})
+
+function launch() {
     launchAutoPager(SITEINFO)
-    GM_registerMenuCommand('AutoPagerize - clear cache', clearCache)
+    gm.registerMenuCommand('AutoPagerize - clear cache', clearCache)
     cacheInfo = getCache()
     var xhrStates = {}
     SITEINFO_IMPORT_URLS.forEach(function(i) {
         if (!cacheInfo[i] || new Date(cacheInfo[i].expire) < new Date()) {
             var opt = {
-                method: 'get',
+                method: 'GET',
                 url: i,
                 onload: function(res) {
                     xhrStates[i] = 'loaded'
@@ -828,7 +642,7 @@ function launchUserScript() {
                 },
             }
             xhrStates[i] = 'start'
-            GM_xmlhttpRequest(opt)
+            gm.xmlhttpRequest(opt)
             setTimeout(function() {
                 if (xhrStates[i] == 'start') {
                     getCacheErrorCallback(i)
@@ -843,42 +657,145 @@ function launchUserScript() {
 }
 
 
-// new google search sucks!
-if (location.href.match('^http://[^.]+\.google\.(?:[^.]{2,3}\.)?[^./]{2,3}/.*(&fp=)')) {
-    var to = location.href.replace(/&fp=.*/, '')
-    // console.log([location.href, to])
-    location.href = to
+// utility functions.
+
+// Wraps the APIs of userscript managers. Greasemonkey 4, Tampermonkey,
+// Violentmonkey and Safari userscript managers (Userscripts, Stay, Macaque)
+// provide the synchronous GM_* API and/or the asynchronous GM.* API.
+function createGMAdapter() {
+    var hasGM = (typeof GM == 'object') && GM !== null
+    var gmFunction = function(name) {
+        return (hasGM && typeof GM[name] == 'function') ?
+            GM[name].bind(GM) : null
+    }
+    var syncGetValue = (typeof GM_getValue == 'function') ? GM_getValue : null
+    var syncSetValue = (typeof GM_setValue == 'function') ? GM_setValue : null
+    var asyncGetValue = gmFunction('getValue')
+    var asyncSetValue = gmFunction('setValue')
+    var addStyleFn = (typeof GM_addStyle == 'function') ? GM_addStyle :
+        gmFunction('addStyle')
+    var xhrFn = (typeof GM_xmlhttpRequest == 'function') ? GM_xmlhttpRequest :
+        (gmFunction('xmlHttpRequest') || gmFunction('xmlhttpRequest'))
+    var menuFn = (typeof GM_registerMenuCommand == 'function') ?
+        GM_registerMenuCommand : gmFunction('registerMenuCommand')
+    var values = {}
+
+    return {
+        // values are loaded before launch, so that getValue can be synchronous.
+        load: function(keys, callback) {
+            if (asyncGetValue) {
+                Promise.all(keys.map(function(key) {
+                    return Promise.resolve(asyncGetValue(key)).then(function(value) {
+                        if (typeof value != 'undefined') {
+                            values[key] = value
+                        }
+                    }, function() {})
+                })).then(callback, callback)
+                return
+            }
+            if (syncGetValue) {
+                keys.forEach(function(key) {
+                    var value = syncGetValue(key)
+                    if (typeof value != 'undefined') {
+                        values[key] = value
+                    }
+                })
+            }
+            callback()
+        },
+        getValue: function(key, defaultValue) {
+            return (key in values) ? values[key] : defaultValue
+        },
+        setValue: function(key, value) {
+            values[key] = value
+            try {
+                if (asyncSetValue) {
+                    Promise.resolve(asyncSetValue(key, value)).catch(log)
+                }
+                else if (syncSetValue) {
+                    syncSetValue(key, value)
+                }
+            }
+            catch(e) {
+                log(e)
+            }
+        },
+        addStyle: function(css) {
+            if (addStyleFn) {
+                try {
+                    addStyleFn(css)
+                    return
+                }
+                catch(e) {
+                    log(e)
+                }
+            }
+            var style = document.createElement('style')
+            style.textContent = css
+            ;(document.head || document.documentElement).appendChild(style)
+        },
+        xmlhttpRequest: function(opt) {
+            if (xhrFn) {
+                xhrFn(opt)
+            }
+            else {
+                sameOriginRequest(opt)
+            }
+        },
+        registerMenuCommand: function(name, fn) {
+            if (menuFn) {
+                try {
+                    menuFn(name, fn)
+                }
+                catch(e) {
+                    log(e)
+                }
+            }
+        }
+    }
 }
 
+function sameOriginRequest(opt) {
+    var xhr = new XMLHttpRequest()
+    xhr.open(opt.method || 'GET', opt.url, true)
+    var forbidden = /^(cookie|cookie2|host|referer|user-agent)$/i
+    var headers = opt.headers || {}
+    for (var name in headers) {
+        if (!forbidden.test(name)) {
+            xhr.setRequestHeader(name, headers[name])
+        }
+    }
+    if (opt.overrideMimeType) {
+        xhr.overrideMimeType(opt.overrideMimeType)
+    }
+    xhr.timeout = XHR_TIMEOUT
+    var response = function() {
+        return {
+            status: xhr.status,
+            statusText: xhr.statusText,
+            responseText: xhr.responseText,
+            responseHeaders: xhr.getAllResponseHeaders(),
+            finalUrl: xhr.responseURL || opt.url
+        }
+    }
+    xhr.onload = function() {
+        if (opt.onload) {
+            opt.onload(response())
+        }
+    }
+    xhr.onerror = xhr.ontimeout = function() {
+        if (opt.onerror) {
+            opt.onerror(response())
+        }
+    }
+    xhr.send(opt.data || null)
+}
 
-
-
-// utility functions.
+// scripts in a document made by DOMParser are never executed.
 function createHTMLDocumentByString(str) {
-    if (document.documentElement.nodeName != 'HTML') {
-        return new DOMParser().parseFromString(str, 'application/xhtml+xml')
-    }
-    var html = strip_html_tag(str)
-    var htmlDoc
-    try {
-        // We have to handle exceptions since Opera 9.6 throws
-        // a NOT_SUPPORTED_ERR exception for |document.cloneNode(false)|
-        // against the DOM 3 Core spec.
-        htmlDoc = document.cloneNode(false)
-        htmlDoc.appendChild(htmlDoc.importNode(document.documentElement, false))
-    }
-    catch(e) {
-        htmlDoc = document.implementation.createDocument(null, 'html', null)
-    }
-    var fragment = createDocumentFragmentByString(html)
-    try {
-        fragment = htmlDoc.adoptNode(fragment)
-    }
-    catch(e) {
-        fragment = htmlDoc.importNode(fragment, true)
-    }
-    htmlDoc.documentElement.appendChild(fragment)
-    return htmlDoc
+    var type = (document.documentElement.nodeName != 'HTML') ?
+        'application/xhtml+xml' : 'text/html'
+    return new DOMParser().parseFromString(str, type)
 }
 
 function getElementsByXPath(xpath, node) {
@@ -898,12 +815,11 @@ function getFirstElementByXPath(xpath, node) {
 }
 
 function getXPathResult(xpath, node, resultType) {
-    var node = node || document
+    node = node || document
     var doc = node.ownerDocument || node
     var resolverNode = node.documentElement || node
     var resolver = (typeof doc.createNSResolver == 'function') ?
         doc.createNSResolver(resolverNode) : resolverNode
-    // Use |node.lookupNamespaceURI('')| for Opera 9.5
     // A workaround for bugs of Node.lookupNamespaceURI(null)
     // https://bugzilla.mozilla.org/show_bug.cgi?id=693615
     // https://bugzilla.mozilla.org/show_bug.cgi?id=694754
@@ -917,10 +833,14 @@ function getXPathResult(xpath, node, resultType) {
             defaultNS = node.lookupNamespaceURI(null)
         }
     }
-    catch(e) {}
+    catch(e) {
+        defaultNS = null
+    }
 
-    if (defaultNS) {
-        const defaultPrefix = '__default__'
+    // HTML documents made by DOMParser have the XHTML namespace,
+    // but XPath for HTML documents works without prefix.
+    if (defaultNS && doc.contentType != 'text/html') {
+        var defaultPrefix = '__default__'
         xpath = addDefaultPrefix(xpath, defaultPrefix)
         var defaultResolver = resolver
         resolver = function (prefix) {
@@ -932,8 +852,8 @@ function getXPathResult(xpath, node, resultType) {
 }
 
 function addDefaultPrefix(xpath, prefix) {
-    const tokenPattern = /([A-Za-z_\u00c0-\ufffd][\w\-.\u00b7-\ufffd]*|\*)\s*(::?|\()?|(".*?"|'.*?'|\d+(?:\.\d*)?|\.(?:\.|\d+)?|[\)\]])|(\/\/?|!=|[<>]=?|[\(\[|,=+-])|([@$])/g
-    const TERM = 1, OPERATOR = 2, MODIFIER = 3
+    var tokenPattern = /([A-Za-z_À-�][\w\-.·-�]*|\*)\s*(::?|\()?|(".*?"|'.*?'|\d+(?:\.\d*)?|\.(?:\.|\d+)?|[\)\]])|(\/\/?|!=|[<>]=?|[\(\[|,=+-])|([@$])/g
+    var TERM = 1, OPERATOR = 2, MODIFIER = 3
     var tokenType = OPERATOR
     prefix += ':'
     function replacer(token, identifier, suffix, term, operator, modifier) {
@@ -957,29 +877,13 @@ function addDefaultPrefix(xpath, prefix) {
     return xpath.replace(tokenPattern, replacer)
 }
 
-function createDocumentFragmentByString(str) {
-    var range = document.createRange()
-    range.setStartAfter(document.body)
-    return range.createContextualFragment(str)
-}
-
 function log(message) {
-    if (typeof console == 'object') {
-        console.log(message)
-    }
-    else {
-        GM_log(message)
-    }
+    console.log(message)
 }
 
 function debug() {
-    if ( typeof DEBUG != 'undefined' && DEBUG ) {
-        if (console.log.apply) {
-            console.log.apply(console, arguments)
-        }
-        else {
-            Function.prototype.apply.apply(console.log, [console, arguments])
-        }
+    if (DEBUG) {
+        console.log.apply(console, arguments)
     }
 }
 
@@ -1005,7 +909,7 @@ function getElementBottom(elem) {
                    'marginTop', 'marginBottom']
     prop.forEach(function(i) {
         var h = parseInt(c_style[i])
-        if (typeof h == 'number') {
+        if (!isNaN(h)) {
             height += h
         }
     })
@@ -1033,70 +937,12 @@ function isSameBaseUrl(urlA, urlB) {
 }
 
 function resolvePath(path, base) {
-    if (path.match(/^https?:\/\//)) {
+    try {
+        return new window.URL(path, base).href
+    }
+    catch(e) {
         return path
     }
-    if (path.match(/^\?/)) {
-        return base.replace(/\?.+$/, '') + path;
-    }
-    if (path.match(/^[^\/]/)) {
-        return base.replace(/[^/]+$/, '') + path
-    }
-    else {
-        return base.replace(/([^/]+:\/\/[^/]+)\/.*/, '\$1') + path
-    }
-}
-
-function fixResolvePath() {
-    if (resolvePath('', 'http://resolve.test/') == 'http://resolve.test/') {
-        return
-    }
-    // XML Base is not supported by recent browsers, use URL API instead.
-    // (global URL is shadowed by the URL variable of this script.)
-    var URLClass = window.URL
-    if (typeof URLClass == 'function') {
-        try {
-            if (new URLClass('a', 'http://resolve.test/b/c').href ==
-                'http://resolve.test/b/a') {
-                resolvePath = function resolvePath_url(path, base) {
-                    return new URLClass(path, base).href
-                }
-                return
-            }
-        }
-        catch(e) {}
-    }
-    // A workaround for WebKit and Mozilla 1.9.2a1pre,
-    // which don't support XML Base in HTML.
-    // https://bugs.webkit.org/show_bug.cgi?id=17423
-    // https://bugzilla.mozilla.org/show_bug.cgi?id=505783
-    var XML_NS = 'http://www.w3.org/XML/1998/namespace'
-    var baseElement = document.createElementNS(null, 'base')
-    var pathElement = document.createElementNS(null, 'path')
-    baseElement.appendChild(pathElement)
-    resolvePath = function resolvePath_workaround(path, base) {
-        baseElement.setAttributeNS(XML_NS, 'xml:base', base)
-        pathElement.setAttributeNS(XML_NS, 'xml:base', path)
-        return pathElement.baseURI
-    }
-}
-
-function strip_html_tag(str) {
-    var chunks = str.split(/(<html(?:[ \t\r\n][^>]*)?>)/)
-    if (chunks.length >= 3) {
-        chunks.splice(0, 2)
-    }
-    str = chunks.join('')
-    chunks = str.split(/(<\/html[ \t\r\n]*>)/)
-    if (chunks.length >= 3) {
-        chunks.splice(chunks.length - 2)
-    }
-    return chunks.join('')
-}
-
-function getPref(key, defaultValue) {
-    var value = GM_getValue(key)
-    return (typeof value == 'undefined') ? defaultValue : value
 }
 
 function wildcard2regep(str) {
@@ -1107,6 +953,9 @@ function isExclude(patterns) {
     var rr = /^\/(.+)\/$/
     var eps = (patterns || '').split(/[\r\n ]+/)
     for (var i = 0; i < eps.length; i++) {
+        if (!eps[i]) {
+            continue
+        }
         var reg = null
         if (rr.test(eps[i])) {
             reg = eps[i].match(rr)[1]
@@ -1120,174 +969,5 @@ function isExclude(patterns) {
     }
     return false
 }
-// obsolete
-function isFirefoxExtension() {
-    return (typeof chlorine == 'object')
-}
 
-function isChromeExtension() {
-    return !isUserScript() && (typeof chrome == 'object') &&
-        (typeof chrome.extension == 'object')
-}
-
-function isSafariExtension() {
-    return !isUserScript() && (typeof safari == 'object') &&
-        (typeof safari.extension == 'object')
-}
-
-function isGreasemonkey() {
-    return (typeof GM_log == 'function')
-}
-
-// Greasemonkey, Tampermonkey, Violentmonkey and Safari userscript managers
-// (Userscripts, Stay, Tampermonkey for Safari).
-function isUserScript() {
-    return (typeof GM_info == 'object') || (typeof GM == 'object') ||
-        isGreasemonkey()
-}
-
-function isJetpack() {
-    // isFirefoxExtension is obsolete
-    return (!isUserScript() && !isSafariExtension() &&
-            !isChromeExtension() && !isFirefoxExtension())
-}
-
-function gmCompatible() {
-    GM_registerMenuCommand = function() {}
-    GM_setValue = function() {}
-    GM_getValue = function() {}
-    GM_addStyle = function() {}
-    uneval = function() {}
-    fixResolvePath = function() {}
-    resolvePath = function (path, base) { return path }
-
-    if (isChromeExtension() || isSafariExtension()) {
-        createHTMLDocumentByString = function(str) {
-            if (document.documentElement.nodeName != 'HTML') {
-                return new DOMParser().parseFromString(str, 'application/xhtml+xml')
-            }
-            // FIXME
-            var html = str.replace(/<script(?:[ \t\r\n][^>]*)?>[\S\s]*?<\/script[ \t\r\n]*>|<\/?(?:i?frame|html|script|object)(?:[ \t\r\n][^<>]*)?>/gi, ' ')
-            var htmlDoc = document.implementation.createHTMLDocument ?
-                document.implementation.createHTMLDocument('apfc') :
-                document.implementation.createDocument(null, 'html', null)
-            var range = document.createRange()
-            range.selectNodeContents(document.documentElement)
-            htmlDoc.documentElement.appendChild(range.createContextualFragment(html))
-            return htmlDoc
-        }
-    }
-    return true
-}
-
-// Fill the gaps of userscript managers which provide only the async GM.* API
-// (GM4 style) or a part of GM_* API, like Safari userscript managers.
-// userScriptValues is initialized here because this function is called
-// before the declaration below is evaluated.
-var userScriptValues
-function userScriptCompatible() {
-    var hasGM = (typeof GM == 'object') && GM
-    userScriptValues = {}
-
-    if (typeof GM_getValue != 'function' ||
-        (hasGM && typeof GM.getValue == 'function')) {
-        GM_getValue = function(key, defaultValue) {
-            return (key in userScriptValues) ?
-                userScriptValues[key] : defaultValue
-        }
-        var nativeSetValue = (typeof GM_setValue == 'function') ? GM_setValue : null
-        GM_setValue = function(key, value) {
-            userScriptValues[key] = value
-            if (hasGM && typeof GM.setValue == 'function') {
-                GM.setValue(key, value)
-            }
-            else if (nativeSetValue) {
-                nativeSetValue(key, value)
-            }
-        }
-    }
-    if (typeof GM_addStyle != 'function') {
-        GM_addStyle = function(css) {
-            var style = document.createElement('style')
-            style.textContent = css
-            ;(document.head || document.documentElement).appendChild(style)
-            return style
-        }
-    }
-    if (typeof GM_log != 'function') {
-        GM_log = function(message) {
-            console.log(message)
-        }
-    }
-    if (typeof GM_registerMenuCommand != 'function') {
-        GM_registerMenuCommand = (hasGM && typeof GM.registerMenuCommand == 'function') ?
-            function(name, fn) { GM.registerMenuCommand(name, fn) } :
-            function() {}
-    }
-    if (typeof DOMParser == 'function') {
-        // scripts in a document made by DOMParser are never executed.
-        createHTMLDocumentByString = function(str) {
-            var type = (document.documentElement.nodeName != 'HTML') ?
-                'application/xhtml+xml' : 'text/html'
-            return new DOMParser().parseFromString(str, type)
-        }
-    }
-    if (typeof GM_xmlhttpRequest != 'function') {
-        GM_xmlhttpRequest = (hasGM && typeof GM.xmlHttpRequest == 'function') ?
-            function(opt) { GM.xmlHttpRequest(opt) } :
-            sameOriginRequest
-    }
-}
-
-function loadUserScriptValues(keys, callback) {
-    var hasGM = (typeof GM == 'object') && GM
-    if (!(hasGM && typeof GM.getValue == 'function')) {
-        // synchronous GM_getValue is available.
-        callback()
-        return
-    }
-    Promise.all(keys.map(function(key) {
-        return Promise.resolve(GM.getValue(key)).then(function(value) {
-            if (typeof value != 'undefined') {
-                userScriptValues[key] = value
-            }
-        }, function() {})
-    })).then(callback, callback)
-}
-
-// requests to the same origin are made by XMLHttpRequest of the page,
-// so that cookies and the character set are handled by the browser.
-function sameOriginRequest(opt) {
-    var xhr = new XMLHttpRequest()
-    xhr.open(opt.method || 'GET', opt.url, true)
-    var forbidden = /^(cookie|cookie2|host|referer|user-agent)$/i
-    for (var name in (opt.headers || {})) {
-        if (!forbidden.test(name)) {
-            xhr.setRequestHeader(name, opt.headers[name])
-        }
-    }
-    if (opt.overrideMimeType && xhr.overrideMimeType) {
-        xhr.overrideMimeType(opt.overrideMimeType)
-    }
-    xhr.timeout = XHR_TIMEOUT
-    var response = function() {
-        return {
-            status: xhr.status,
-            statusText: xhr.statusText,
-            responseText: xhr.responseText,
-            responseHeaders: xhr.getAllResponseHeaders(),
-            finalUrl: xhr.responseURL || opt.url
-        }
-    }
-    xhr.onload = function() {
-        if (opt.onload) {
-            opt.onload(response())
-        }
-    }
-    xhr.onerror = xhr.ontimeout = function() {
-        if (opt.onerror) {
-            opt.onerror(response())
-        }
-    }
-    xhr.send(opt.data || null)
-}
+})()
