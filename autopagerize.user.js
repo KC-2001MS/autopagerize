@@ -291,12 +291,12 @@ AutoPager.prototype.request = function() {
         url: this.requestURL,
         headers: {},
         overrideMimeType: mime,
-        onerror: function(res) {
+        onerror: function() {
             self.error()
         },
         onload: function(res) {
             if (res.finalUrl) {
-                var url_s = res.finalUrl.split(/[\/\?]/)
+                var url_s = res.finalUrl.split(/[/?]/)
                 if (url_s[0] == location.protocol && location.host == url_s[2]) {
                     self.requestLoad.apply(self, [res])
                     return
@@ -911,11 +911,11 @@ function getXPathResult(xpath, node, resultType) {
 }
 
 function addDefaultPrefix(xpath, prefix) {
-    var tokenPattern = /([A-Za-z_À-�][\w\-.·-�]*|\*)\s*(::?|\()?|(".*?"|'.*?'|\d+(?:\.\d*)?|\.(?:\.|\d+)?|[\)\]])|(\/\/?|!=|[<>]=?|[\(\[|,=+-])|([@$])/g
+    var tokenPattern = /([A-Za-z_À-�][\w\-.·-�]*|\*)\s*(::?|\()?|(".*?"|'.*?'|\d+(?:\.\d*)?|\.(?:\.|\d+)?|[)\]])|(\/\/?|!=|[<>]=?|[([|,=+-])|([@$])/g
     var TERM = 1, OPERATOR = 2, MODIFIER = 3
     var tokenType = OPERATOR
     prefix += ':'
-    function replacer(token, identifier, suffix, term, operator, modifier) {
+    function replacer(token, identifier, suffix, term, operator) {
         if (suffix) {
             tokenType =
                 (suffix == ':' || (suffix == '::' &&
@@ -983,7 +983,7 @@ function getScrollHeight() {
 
 function isSameDomain(url) {
     if (url.match(/^\w+:/)) {
-        var url_s = url.split(/[\/\?]/)
+        var url_s = url.split(/[/?]/)
         return url_s[0] == location.protocol && location.host == url_s[2]
     }
     else {
@@ -1005,7 +1005,7 @@ function resolvePath(path, base) {
 }
 
 function wildcard2regep(str) {
-    return '^' + str.replace(/([-()\[\]{}+?.$\^|,:#<!\\])/g, '\\$1').replace(/\x08/g, '\\x08').replace(/\*/g, '.*')
+    return '^' + str.replace(/([-()[\]{}+?.$^|,:#<!\\])/g, '\\$1').replace(/\*/g, '.*')
 }
 
 function isExclude(patterns) {
