@@ -56,7 +56,11 @@ var XHR_TIMEOUT = 30 * 1000
 // SITEINFO sources, tried in order. As of 2026 wedata.net answers only over
 // HTTP, which Safari may block, so the snapshot bundled with AutoPagerize X
 // (https://github.com/KC-2001MS/AutoPagerize-X) is used as the last resort.
-var SITEINFO_CACHE_KEY = 'siteinfo'
+//
+// The downloaded SITEINFO is saved permanently: it is never removed when it
+// expires or when the download fails, and a new download is merged into it.
+var SITEINFO_KEY = 'siteinfo'
+var SITEINFO_META_KEY = 'siteinfo_meta'
 var SITEINFO_SOURCES = [
     { url: 'https://wedata.net/databases/AutoPagerize/items_all.json',
       parse: parseWedataJSON },
@@ -508,19 +512,52 @@ var launchAutoPager = function(list) {
         }
     }
 }
-var clearCache = function() {
-    gm.setValue('cacheInfo', '')
-}
-var getCache = function() {
+var parseStoredJSON = function(key, defaultValue) {
+    var value = gm.getValue(key)
+    if (typeof value != 'string' || value == '') {
+        return defaultValue
+    }
     try {
-        return JSON.parse(gm.getValue('cacheInfo')) || {}
+        return JSON.parse(value)
     }
     catch(e) {
-        return {}
+        return defaultValue
     }
 }
-var saveCache = function() {
-    gm.setValue('cacheInfo', JSON.stringify(cacheInfo))
+var loadSavedSiteinfo = function() {
+    var info = parseStoredJSON(SITEINFO_KEY, null)
+    if (Array.isArray(info)) {
+        return info
+    }
+    // migrate the cache saved by older versions.
+    var cacheInfo = parseStoredJSON('cacheInfo', {}) || {}
+    var old = cacheInfo.siteinfo ||
+        cacheInfo['https://wedata.net/databases/AutoPagerize/items.json'] ||
+        cacheInfo['http://wedata.net/databases/AutoPagerize/items.json']
+    info = (old && Array.isArray(old.info)) ? old.info : []
+    if (info.length > 0) {
+        gm.setValue(SITEINFO_KEY, JSON.stringify(info))
+    }
+    return info
+}
+var loadSiteinfoMeta = function() {
+    return parseStoredJSON(SITEINFO_META_KEY, {}) || {}
+}
+var saveSiteinfo = function(info, meta) {
+    gm.setValue(SITEINFO_KEY, JSON.stringify(info))
+    gm.setValue(SITEINFO_META_KEY, JSON.stringify(meta))
+}
+// entries of the new SITEINFO win. entries only in the saved one are kept.
+var mergeSiteinfo = function(saved, fetched) {
+    var urls = {}
+    fetched.forEach(function(i) {
+        urls[i.url] = true
+    })
+    var merged = fetched.concat(saved.filter(function(i) {
+        return i && i.url && !urls[i.url]
+    }))
+    merged.sort(function(a, b) { return (b.url.length - a.url.length) })
+    return merged
 }
 
 // wedata JSON: [{ data: { url, nextLink, pageElement, ... } }, ...]
@@ -668,9 +705,9 @@ if (typeof(window.AutoPagerize) == 'undefined') {
 }
 
 var ap = null
-var cacheInfo = {}
 
-gm.load(['cacheInfo', 'exclude_patterns', 'force_target_window'], function() {
+gm.load([SITEINFO_KEY, SITEINFO_META_KEY, 'cacheInfo',
+         'exclude_patterns', 'force_target_window'], function() {
     FORCE_TARGET_WINDOW = gm.getValue('force_target_window', true)
     var ep = gm.getValue('exclude_patterns')
     if (ep && isExclude(ep)) {
@@ -681,38 +718,42 @@ gm.load(['cacheInfo', 'exclude_patterns', 'force_target_window'], function() {
 
 function launch() {
     launchAutoPager(SITEINFO)
-    gm.registerMenuCommand('AutoPagerize - clear cache', clearCache)
-    cacheInfo = getCache()
-    var cache = cacheInfo[SITEINFO_CACHE_KEY]
-    if (cache && cache.info && cache.info.length > 0) {
-        launchAutoPager(cache.info)
+    gm.registerMenuCommand('AutoPagerize - update SITEINFO', function() {
+        updateSiteinfo(true)
+    })
+    var saved = loadSavedSiteinfo()
+    if (saved.length > 0) {
+        launchAutoPager(saved)
     }
-    if (!cache || !(new Date(cache.expire) >= new Date())) {
-        fetchSiteinfo(SITEINFO_SOURCES, function(info, url) {
-            var now = new Date().getTime()
-            if (info) {
-                cacheInfo = {}
-                cacheInfo[SITEINFO_CACHE_KEY] = {
-                    url: url,
-                    expire: new Date(now + CACHE_EXPIRE),
-                    info: info
-                }
-                saveCache()
-                launchAutoPager(info)
-            }
-            else {
-                // keep the old SITEINFO and retry later.
-                cacheInfo = {}
-                cacheInfo[SITEINFO_CACHE_KEY] = {
-                    url: cache ? cache.url : null,
-                    expire: new Date(now + SITEINFO_RETRY),
-                    info: cache ? cache.info : []
-                }
-                saveCache()
-            }
-        })
-    }
+    updateSiteinfo(false)
     launchAutoPager([MICROFORMAT])
+}
+
+// downloads SITEINFO when the saved one is expired (or force is true),
+// and merges it into the saved one.
+function updateSiteinfo(force) {
+    var meta = loadSiteinfoMeta()
+    if (!force && meta.expire && new Date(meta.expire) >= new Date()) {
+        return
+    }
+    fetchSiteinfo(SITEINFO_SOURCES, function(info, url) {
+        var now = new Date().getTime()
+        var saved = loadSavedSiteinfo()
+        if (info) {
+            var merged = mergeSiteinfo(saved, info)
+            saveSiteinfo(merged, {
+                url: url,
+                updated: new Date(now),
+                expire: new Date(now + CACHE_EXPIRE)
+            })
+            launchAutoPager(merged)
+        }
+        else {
+            // keep the saved SITEINFO and retry later.
+            meta.expire = new Date(now + SITEINFO_RETRY)
+            saveSiteinfo(saved, meta)
+        }
+    })
 }
 
 
