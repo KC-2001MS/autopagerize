@@ -8,7 +8,7 @@
 // @exclude        http://b.hatena.ne.jp/*
 // @exclude        http://www.facebook.com/plugins/like.php*
 // @exclude        http://api.tweetmeme.com/button.js*
-// @version        0.0.66
+// @version        0.1.0
 // @icon           http://autopagerize.net/img/icons/icon_032.png
 // @grant          GM_getValue
 // @grant          GM_setValue
@@ -46,7 +46,7 @@
 var gm = createGMAdapter()
 
 var HOME_URL = 'http://autopagerize.net/'
-var VERSION = '0.0.66'
+var VERSION = '0.1.0'
 var DEBUG = false
 var AUTO_START = true
 var CACHE_EXPIRE = 24 * 60 * 60 * 1000
