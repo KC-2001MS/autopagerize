@@ -22,6 +22,7 @@
 // @grant          GM.xmlhttpRequest
 // @grant          GM.registerMenuCommand
 // @connect        wedata.net
+// @connect        raw.githubusercontent.com
 // @connect        *
 // @run-at         document-end
 // @inject-into    content
@@ -52,9 +53,21 @@ var CACHE_EXPIRE = 24 * 60 * 60 * 1000
 var BASE_REMAIN_HEIGHT = 400
 var FORCE_TARGET_WINDOW = true
 var XHR_TIMEOUT = 30 * 1000
-var SITEINFO_IMPORT_URLS = [
-    'https://wedata.net/databases/AutoPagerize/items.json',
+// SITEINFO sources, tried in order. As of 2026 wedata.net answers only over
+// HTTP, which Safari may block, so the snapshot bundled with AutoPagerize X
+// (https://github.com/KC-2001MS/AutoPagerize-X) is used as the last resort.
+var SITEINFO_CACHE_KEY = 'siteinfo'
+var SITEINFO_SOURCES = [
+    { url: 'https://wedata.net/databases/AutoPagerize/items_all.json',
+      parse: parseWedataJSON },
+    { url: 'http://wedata.net/databases/AutoPagerize/items_all.json',
+      parse: parseWedataJSON },
+    { url: 'https://raw.githubusercontent.com/KC-2001MS/AutoPagerize-X/main/' +
+          'AutoPagerize%20X%20Extention/Resources/siteinfo.js',
+      parse: parseBundledSiteinfo },
 ]
+// retry interval when no source is available.
+var SITEINFO_RETRY = 60 * 60 * 1000
 var COLOR = {
     on: '#0f0',
     off: '#ccc',
@@ -506,59 +519,103 @@ var getCache = function() {
         return {}
     }
 }
-var getCacheCallback = function(res, url) {
-    if (res.status != 200) {
-        return getCacheErrorCallback(url)
-    }
+var saveCache = function() {
+    gm.setValue('cacheInfo', JSON.stringify(cacheInfo))
+}
 
-    var info
+// wedata JSON: [{ data: { url, nextLink, pageElement, ... } }, ...]
+function parseWedataJSON(text) {
+    return reduceSiteinfo(JSON.parse(text))
+}
+
+// siteinfo.js of AutoPagerize X: loadLocalSiteinfoCallback([...], "date")
+function parseBundledSiteinfo(text) {
+    var head = text.indexOf('loadLocalSiteinfoCallback(')
+    var start = text.indexOf('[', head)
+    var end = text.lastIndexOf(']')
+    if (head < 0 || start < 0 || end < start) {
+        return []
+    }
+    return reduceSiteinfo(JSON.parse(text.slice(start, end + 1)))
+}
+
+function reduceSiteinfo(data) {
+    var r_keys = ['url', 'nextLink', 'insertBefore', 'pageElement']
+    var info = (data || []).map(function(i) {
+        return i && i.data
+    }).filter(function(i) {
+        return i && i.url && i.nextLink && i.pageElement
+    })
+    info.sort(function(a, b) { return (b.url.length - a.url.length) })
+    return info.map(function(i) {
+        var item = {}
+        r_keys.forEach(function(key) {
+            if (i[key]) {
+                item[key] = i[key]
+            }
+        })
+        return item
+    })
+}
+
+// tries the sources in order and calls back with the first valid SITEINFO.
+var fetchSiteinfo = function(sources, callback) {
+    if (sources.length == 0) {
+        callback(null, null)
+        return
+    }
+    var source = sources[0]
+    var done = false
+    var next = function() {
+        if (!done) {
+            done = true
+            debug('SITEINFO not available.', source.url)
+            fetchSiteinfo(sources.slice(1), callback)
+        }
+    }
+    var timer = setTimeout(next, XHR_TIMEOUT)
     try {
-        info = JSON.parse(res.responseText).map(function(i) { return i.data })
+        gm.xmlhttpRequest({
+            method: 'GET',
+            url: source.url,
+            timeout: XHR_TIMEOUT,
+            onload: function(res) {
+                if (done) {
+                    return
+                }
+                var info = null
+                if (res.status == 200) {
+                    try {
+                        info = source.parse(res.responseText)
+                    }
+                    catch(e) {
+                        info = null
+                    }
+                }
+                if (info && info.length > 0) {
+                    done = true
+                    clearTimeout(timer)
+                    callback(info, source.url)
+                }
+                else {
+                    clearTimeout(timer)
+                    next()
+                }
+            },
+            onerror: function() {
+                clearTimeout(timer)
+                next()
+            },
+            ontimeout: function() {
+                clearTimeout(timer)
+                next()
+            }
+        })
     }
     catch(e) {
-        info = []
+        clearTimeout(timer)
+        next()
     }
-    if (info.length > 0) {
-        info = info.filter(function(i) { return ('url' in i) })
-        info.sort(function(a, b) { return (b.url.length - a.url.length) })
-
-        var r_keys = ['url', 'nextLink', 'insertBefore', 'pageElement']
-        info = info.map(function(i) {
-            var item = {}
-            r_keys.forEach(function(key) {
-                if (i[key]) {
-                    item[key] = i[key]
-                }
-            })
-            return item
-        })
-
-        cacheInfo[url] = {
-            url: url,
-            expire: new Date(new Date().getTime() + CACHE_EXPIRE),
-            info: info
-        }
-        gm.setValue('cacheInfo', JSON.stringify(cacheInfo))
-        launchAutoPager(info)
-    }
-    else {
-        getCacheErrorCallback(url)
-    }
-}
-var getCacheErrorCallback = function(url) {
-    var expire = new Date(new Date().getTime() + CACHE_EXPIRE)
-    if (cacheInfo[url]) {
-        cacheInfo[url].expire = expire
-        launchAutoPager(cacheInfo[url].info)
-    }
-    else {
-        cacheInfo[url] = {
-            url: url,
-            expire: expire,
-            info: []
-        }
-    }
-    gm.setValue('cacheInfo', JSON.stringify(cacheInfo))
 }
 
 var linkFilter = function(doc, url) {
@@ -626,33 +683,35 @@ function launch() {
     launchAutoPager(SITEINFO)
     gm.registerMenuCommand('AutoPagerize - clear cache', clearCache)
     cacheInfo = getCache()
-    var xhrStates = {}
-    SITEINFO_IMPORT_URLS.forEach(function(i) {
-        if (!cacheInfo[i] || new Date(cacheInfo[i].expire) < new Date()) {
-            var opt = {
-                method: 'GET',
-                url: i,
-                onload: function(res) {
-                    xhrStates[i] = 'loaded'
-                    getCacheCallback(res, i)
-                },
-                onerror: function(res){
-                    xhrStates[i] = 'error'
-                    getCacheErrorCallback(i)
-                },
-            }
-            xhrStates[i] = 'start'
-            gm.xmlhttpRequest(opt)
-            setTimeout(function() {
-                if (xhrStates[i] == 'start') {
-                    getCacheErrorCallback(i)
+    var cache = cacheInfo[SITEINFO_CACHE_KEY]
+    if (cache && cache.info && cache.info.length > 0) {
+        launchAutoPager(cache.info)
+    }
+    if (!cache || !(new Date(cache.expire) >= new Date())) {
+        fetchSiteinfo(SITEINFO_SOURCES, function(info, url) {
+            var now = new Date().getTime()
+            if (info) {
+                cacheInfo = {}
+                cacheInfo[SITEINFO_CACHE_KEY] = {
+                    url: url,
+                    expire: new Date(now + CACHE_EXPIRE),
+                    info: info
                 }
-            }, XHR_TIMEOUT)
-        }
-        else {
-            launchAutoPager(cacheInfo[i].info)
-        }
-    })
+                saveCache()
+                launchAutoPager(info)
+            }
+            else {
+                // keep the old SITEINFO and retry later.
+                cacheInfo = {}
+                cacheInfo[SITEINFO_CACHE_KEY] = {
+                    url: cache ? cache.url : null,
+                    expire: new Date(now + SITEINFO_RETRY),
+                    info: cache ? cache.info : []
+                }
+                saveCache()
+            }
+        })
+    }
     launchAutoPager([MICROFORMAT])
 }
 
