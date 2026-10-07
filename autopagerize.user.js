@@ -21,6 +21,7 @@
 // @grant          GM.xmlHttpRequest
 // @grant          GM.xmlhttpRequest
 // @grant          GM.registerMenuCommand
+// @require        https://raw.githubusercontent.com/KC-2001MS/autopagerize/098b5b288af8e1cd8a36c10bd82f4e80be9c83c4/siteinfo.js
 // @connect        wedata.net
 // @connect        raw.githubusercontent.com
 // @connect        *
@@ -40,6 +41,7 @@
 // http://www.gnu.org/copyleft/gpl.html
 //
 
+/* global AUTOPAGERIZE_SITEINFO */
 (function() {
 'use strict'
 
@@ -53,12 +55,16 @@ var CACHE_EXPIRE = 24 * 60 * 60 * 1000
 var BASE_REMAIN_HEIGHT = 400
 var FORCE_TARGET_WINDOW = true
 var XHR_TIMEOUT = 30 * 1000
-// SITEINFO sources, tried in order. As of 2026 wedata.net answers only over
-// HTTP, which Safari may block, so the snapshot bundled with AutoPagerize X
-// (https://github.com/KC-2001MS/AutoPagerize-X) is used as the last resort.
+// SITEINFO comes from three places, like AutoPagerize X:
 //
-// The downloaded SITEINFO is saved permanently: it is never removed when it
-// expires or when the download fails, and a new download is merged into it.
+// 1. siteinfo.js, the snapshot bundled with this script by @require. It is
+//    always available, even when the downloads below fail.
+// 2. the downloaded SITEINFO, saved permanently. It is never removed when it
+//    expires or when the download fails, and a new download is merged into
+//    it. Its entries win over the bundled ones.
+// 3. the sources below, tried in order once a day. As of 2026 wedata.net
+//    answers only over HTTP, which Safari may block, so the latest snapshot
+//    in this repository is used as the last resort.
 var SITEINFO_KEY = 'siteinfo'
 var SITEINFO_META_KEY = 'siteinfo_meta'
 var SITEINFO_SOURCES = [
@@ -66,8 +72,7 @@ var SITEINFO_SOURCES = [
       parse: parseWedataJSON },
     { url: 'http://wedata.net/databases/AutoPagerize/items_all.json',
       parse: parseWedataJSON },
-    { url: 'https://raw.githubusercontent.com/KC-2001MS/AutoPagerize-X/main/' +
-          'AutoPagerize%20X%20Extention/Resources/siteinfo.js',
+    { url: 'https://raw.githubusercontent.com/KC-2001MS/autopagerize/master/siteinfo.js',
       parse: parseBundledSiteinfo },
 ]
 // retry interval when no source is available.
@@ -565,15 +570,34 @@ function parseWedataJSON(text) {
     return reduceSiteinfo(JSON.parse(text))
 }
 
-// siteinfo.js of AutoPagerize X: loadLocalSiteinfoCallback([...], "date")
+// siteinfo.js of this repository: var AUTOPAGERIZE_SITEINFO = { info: [...] }
 function parseBundledSiteinfo(text) {
-    var head = text.indexOf('loadLocalSiteinfoCallback(')
-    var start = text.indexOf('[', head)
-    var end = text.lastIndexOf(']')
-    if (head < 0 || start < 0 || end < start) {
+    var start = text.indexOf('{')
+    var end = text.lastIndexOf('}')
+    if (start < 0 || end < start) {
         return []
     }
-    return reduceSiteinfo(JSON.parse(text.slice(start, end + 1)))
+    return validSiteinfo(JSON.parse(text.slice(start, end + 1)).info)
+}
+
+// SITEINFO bundled by @require. a manager without @require support just
+// lacks it.
+function getBundledSiteinfo() {
+    try {
+        if (typeof AUTOPAGERIZE_SITEINFO == 'object' && AUTOPAGERIZE_SITEINFO) {
+            return validSiteinfo(AUTOPAGERIZE_SITEINFO.info)
+        }
+    }
+    catch(e) {
+        log(e)
+    }
+    return []
+}
+
+function validSiteinfo(info) {
+    return (Array.isArray(info) ? info : []).filter(function(i) {
+        return i && i.url && i.nextLink && i.pageElement
+    })
 }
 
 function reduceSiteinfo(data) {
@@ -721,9 +745,9 @@ function launch() {
     gm.registerMenuCommand('AutoPagerize - update SITEINFO', function() {
         updateSiteinfo(true)
     })
-    var saved = loadSavedSiteinfo()
-    if (saved.length > 0) {
-        launchAutoPager(saved)
+    var info = mergeSiteinfo(getBundledSiteinfo(), loadSavedSiteinfo())
+    if (info.length > 0) {
+        launchAutoPager(info)
     }
     updateSiteinfo(false)
     launchAutoPager([MICROFORMAT])
@@ -746,7 +770,7 @@ function updateSiteinfo(force) {
                 updated: new Date(now),
                 expire: new Date(now + CACHE_EXPIRE)
             })
-            launchAutoPager(merged)
+            launchAutoPager(mergeSiteinfo(getBundledSiteinfo(), merged))
         }
         else {
             // keep the saved SITEINFO and retry later.

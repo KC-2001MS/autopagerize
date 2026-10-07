@@ -22,12 +22,12 @@ When AutoPagerize is active on a page, a small square icon appears at the top ri
 
 ## How it works
 
-AutoPagerize uses SITEINFO, a list of per-site rules that describe where the "next page" link and the page content are. SITEINFO is downloaded from the following sources, in order:
+AutoPagerize uses SITEINFO, a list of per-site rules that describe where the "next page" link and the page content are.
 
-1. [wedata](http://wedata.net/databases/AutoPagerize/items_all.json)
-2. The SITEINFO snapshot bundled with [AutoPagerize X](https://github.com/KC-2001MS/AutoPagerize-X)
+- A SITEINFO snapshot ([`siteinfo.js`](siteinfo.js)) is bundled with the script, so it works right after installation.
+- Once a day, the latest SITEINFO is downloaded from [wedata](http://wedata.net/databases/AutoPagerize/items_all.json) (or from `siteinfo.js` in this repository if wedata is unavailable) and saved by your userscript manager. The saved SITEINFO is never removed. You can update it manually with the "AutoPagerize - update SITEINFO" menu command.
 
-The downloaded SITEINFO is saved by your userscript manager and updated once a day. It is never removed, so AutoPagerize keeps working even if these sources become unavailable. You can update it manually with the "AutoPagerize - update SITEINFO" menu command.
+To update the bundled snapshot, run `node tools/update-siteinfo.js` and update the commit hash in the `@require` line of `autopagerize.user.js`.
 
 ## Code lineage
 
